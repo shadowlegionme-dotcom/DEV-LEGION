@@ -1,0 +1,335 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DEV LEGION | Admin Panel</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #0b1020;
+      color: #edf2ff;
+      font-family: Arial, sans-serif;
+    }
+    header {
+      background: #111a30;
+      padding: 20px;
+      border-bottom: 1px solid #293653;
+    }
+    header h1 { margin: 0; color: #64a5ff; }
+    header p { color: #a9b7d0; margin-bottom: 0; }
+    main { max-width: 850px; margin: auto; padding: 18px; }
+    .card {
+      background: #121b30;
+      border: 1px solid #293653;
+      border-radius: 14px;
+      padding: 18px;
+      margin-bottom: 18px;
+    }
+    h2 { margin-top: 0; font-size: 20px; }
+    input, textarea, button {
+      width: 100%;
+      padding: 12px;
+      margin: 7px 0;
+      border-radius: 8px;
+      font-size: 15px;
+    }
+    input, textarea {
+      background: #0b1020;
+      color: white;
+      border: 1px solid #354463;
+    }
+    textarea { min-height: 85px; resize: vertical; }
+    button {
+      border: 0;
+      background: #2675ef;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    button.secondary { background: #354463; }
+    button.danger { background: #c9384d; }
+    button.small { width: auto; padding: 9px 12px; }
+    .app {
+      border: 1px solid #354463;
+      padding: 14px;
+      margin: 12px 0;
+      border-radius: 10px;
+      overflow-wrap: anywhere;
+    }
+    .app h3 { margin: 0 0 8px; color: #80b5ff; }
+    .muted { color: #a9b7d0; font-size: 14px; }
+    #status { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .hidden { display: none; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .actions button { flex: 1; min-width: 100px; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>DEV LEGION</h1>
+  <p>Admin Control Panel</p>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Admin Login</h2>
+    <form id="loginForm">
+      <input id="email" type="email" placeholder="Admin email"
+        autocomplete="username" required>
+      <input id="password" type="password" placeholder="Password"
+        autocomplete="current-password" required>
+      <button type="submit">Login</button>
+    </form>
+    <div id="session" class="hidden">
+      <p id="adminEmail" class="muted"></p>
+      <button id="logoutBtn" class="secondary">Logout</button>
+    </div>
+    <p id="status" class="muted">Please log in with your admin account.</p>
+  </div>
+
+  <section id="dashboard" class="hidden">
+    <div class="card">
+      <h2 id="formTitle">Add New App</h2>
+      <form id="appForm">
+        <input id="appName" placeholder="App name" required>
+        <textarea id="appDescription" placeholder="Description"></textarea>
+        <input id="appVersion" placeholder="Version e.g. 26.0.0.0" required>
+        <input id="appSize" placeholder="File size e.g. 25 MB">
+        <input id="appUrl" type="url" placeholder="Direct APK download URL" required>
+        <button type="submit" id="saveBtn">Add App</button>
+        <button type="button" id="cancelBtn" class="secondary hidden">
+          Cancel Edit
+        </button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Apps Management</h2>
+      <button id="refreshBtn" class="secondary">Refresh Apps</button>
+      <div id="appsList">Loading apps...</div>
+    </div>
+  </section>
+</main>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyAenJ4PGBJETPcoUKtm3bCA-an-dubsLao",
+    authDomain: "dev-legion-marketplace.firebaseapp.com",
+    projectId: "dev-legion-marketplace",
+    storageBucket: "dev-legion-marketplace.firebasestorage.app",
+    messagingSenderId: "143704507665",
+    appId: "1:143704507665:web:f2a962ad9c36fb5a9e38b0",
+    measurementId: "G-YR9SRYWGG9"
+  };
+
+  const ADMIN_UID = "8AIesPRq5egUh0cqoqO6cZrekx53";
+
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.firestore();
+
+  const $ = id => document.getElementById(id);
+  let editingId = null;
+
+  function status(message) {
+    $("status").textContent = message;
+  }
+
+  function showDashboard(show) {
+    $("dashboard").classList.toggle("hidden", !show);
+    $("loginForm").classList.toggle("hidden", show);
+    $("session").classList.toggle("hidden", !show);
+  }
+
+  function resetForm() {
+    editingId = null;
+    $("appForm").reset();
+    $("formTitle").textContent = "Add New App";
+    $("saveBtn").textContent = "Add App";
+    $("cancelBtn").classList.add("hidden");
+  }
+
+  function addText(parent, tag, value, className) {
+    const el = document.createElement(tag);
+    el.textContent = value == null ? "" : String(value);
+    if (className) el.className = className;
+    parent.appendChild(el);
+    return el;
+  }
+
+  $("loginForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    status("Signing in...");
+
+    try {
+      const result = await auth.signInWithEmailAndPassword(
+        $("email").value.trim(),
+        $("password").value
+      );
+
+      if (result.user.uid !== ADMIN_UID) {
+        await auth.signOut();
+        status("Access denied: this account is not the authorized admin.");
+        return;
+      }
+
+      status("Login successful.");
+    } catch (error) {
+      status("Login failed: " + error.message);
+    }
+  });
+
+  auth.onAuthStateChanged(async user => {
+    if (user && user.uid === ADMIN_UID) {
+      showDashboard(true);
+      $("adminEmail").textContent = "Logged in: " + (user.email || "Admin");
+      await loadApps();
+    } else {
+      showDashboard(false);
+      $("adminEmail").textContent = "";
+      $("appsList").textContent = "";
+      if (user) await auth.signOut();
+    }
+  });
+
+  $("logoutBtn").addEventListener("click", async () => {
+    await auth.signOut();
+    resetForm();
+    status("You have logged out.");
+  });
+
+  async function loadApps() {
+    $("appsList").textContent = "Loading apps...";
+
+    try {
+      const snapshot = await db.collection("apps").get();
+      $("appsList").replaceChildren();
+
+      if (snapshot.empty) {
+        addText($("appsList"), "p", "No apps found.", "muted");
+        return;
+      }
+
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        const item = document.createElement("div");
+        item.className = "app";
+
+        addText(item, "h3", data.name || "Unnamed app");
+        addText(item, "p", "Version: " + (data.version || "N/A"));
+        addText(item, "p", "Size: " + (data.size || "N/A"));
+        addText(item, "p", data.description || "No description", "muted");
+        addText(item, "p", "APK: " + (data.apk_url || "N/A"), "muted");
+        addText(item, "p", "Document ID: " + doc.id, "muted");
+
+        const actions = document.createElement("div");
+        actions.className = "actions";
+
+        const edit = document.createElement("button");
+        edit.className = "small";
+        edit.textContent = "Edit";
+        edit.addEventListener("click", () => {
+          editingId = doc.id;
+          $("appName").value = data.name || "";
+          $("appDescription").value = data.description || "";
+          $("appVersion").value = data.version || "";
+          $("appSize").value = data.size || "";
+          $("appUrl").value = data.apk_url || "";
+          $("formTitle").textContent = "Edit App";
+          $("saveBtn").textContent = "Save Changes";
+          $("cancelBtn").classList.remove("hidden");
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        });
+
+        const remove = document.createElement("button");
+        remove.className = "small danger";
+        remove.textContent = "Delete";
+        remove.addEventListener("click", async () => {
+          if (!auth.currentUser ||
+              auth.currentUser.uid !== ADMIN_UID) {
+            status("Access denied.");
+            return;
+          }
+
+          if (!confirm('Delete "' + (data.name || doc.id) + '"?')) return;
+
+          try {
+            await db.collection("apps").doc(doc.id).delete();
+            status("App deleted successfully.");
+            await loadApps();
+          } catch (error) {
+            status("Delete failed: " + error.message);
+          }
+        });
+
+        actions.append(edit, remove);
+        item.appendChild(actions);
+        $("appsList").appendChild(item);
+      });
+    } catch (error) {
+      $("appsList").textContent = "Could not load apps.";
+      status("Firestore error: " + error.message);
+    }
+  }
+
+  $("appForm").addEventListener("submit", async event => {
+    event.preventDefault();
+
+    const user = auth.currentUser;
+    if (!user || user.uid !== ADMIN_UID) {
+      status("Access denied. Please log in as admin.");
+      return;
+    }
+
+    const apkUrl = $("appUrl").value.trim();
+    if (!/^https:\/\/\S+$/i.test(apkUrl)) {
+      status("Please enter a valid HTTPS APK URL.");
+      return;
+    }
+
+    const appData = {
+      name: $("appName").value.trim(),
+      description: $("appDescription").value.trim(),
+      version: $("appVersion").value.trim(),
+      size: $("appSize").value.trim(),
+      apk_url: apkUrl
+    };
+
+    if (!appData.name || !appData.version) {
+      status("App name and version are required.");
+      return;
+    }
+
+    $("saveBtn").disabled = true;
+    status("Saving app...");
+
+    try {
+      if (editingId) {
+        await db.collection("apps").doc(editingId).update(appData);
+        status("App updated successfully.");
+      } else {
+        await db.collection("apps").add(appData);
+        status("New app added successfully.");
+      }
+
+      resetForm();
+      await loadApps();
+    } catch (error) {
+      status("Save failed: " + error.message);
+    } finally {
+      $("saveBtn").disabled = false;
+    }
+  });
+
+  $("cancelBtn").addEventListener("click", resetForm);
+  $("refreshBtn").addEventListener("click", loadApps);
+</script>
+</body>
+</html>
